@@ -15,17 +15,21 @@ import fire
 from aiogram import Bot
 
 
+DEBUG = True
+
+
 # Handle Platforms
-if platform.system() == "Windows":
+OPERATING_SYSTEM = platform.system()
+if OPERATING_SYSTEM == "Windows":
     import pygetwindow as gw
-elif platform.system() == "Linux":
+elif OPERATING_SYSTEM == "Linux":
     from Xlib import display
-elif platform.system() == "Darwin":
+elif OPERATING_SYSTEM == "Darwin":
     import Quartz
     from AppKit import NSWorkspace
 else:
     print(f"Could not recognize the Operating System!")
-    print(f"System detected:  {platform.system()}")
+    print(f"System detected:  {OPERATING_SYSTEM}")
 
 
 def get_script_directory():
@@ -74,9 +78,9 @@ class TrackingApp:
         current_time = datetime.now()
         date_str = current_time.strftime("%Y-%m-%d")
         filename = os.path.join(f"{os.path.dirname(os.path.abspath(__file__))}/window_tracking", f"{date_str}.csv")
-        print(filename)
         if os.path.isfile(filename):
             events = csv_to_event_format(filename)
+            print(f"Previous statistics:")
             print(format_events(events))
 
 
@@ -119,7 +123,7 @@ class TrackingApp:
 # Window tracking functions
 
 
-async def track_windows(save_path, save_interval=300):
+async def track_windows(save_path, save_interval=300, operating_system = OPERATING_SYSTEM):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
@@ -142,9 +146,10 @@ async def track_windows(save_path, save_interval=300):
 
     asyncio.create_task(periodic_save())
 
+    # Main Loop: Getting & saving current focus window
     try:
         while True:
-            window_title = await get_active_window()
+            window_title = await get_active_window[operating_system]()
             if window_title and (previous_window != window_title):
                 if previous_window and start_time:
                     end_time = datetime.now()
@@ -164,7 +169,9 @@ async def track_windows(save_path, save_interval=300):
 
             await asyncio.sleep(1)
 
+    # Wrap-up when stopped
     except asyncio.CancelledError:
+        # Add Pause entry
         if previous_window and start_time:
             duration = datetime.now() - start_time
             if previous_window in summary:
@@ -175,10 +182,11 @@ async def track_windows(save_path, save_interval=300):
             # Record the exit time for the last window
             time_str = datetime.now().strftime("%H:%M:%S")
             tracked_windows.append([time_str, "Pause tracking"])
-
+        # Save remaining
         if tracked_windows:
             await save_to_csv(tracked_windows, save_path, rotation_interval)
 
+        # Produce summary
         events = summary_to_event_format(summary)
         message_text = format_events(events)
 
@@ -227,19 +235,11 @@ def get_active_window_macos():
             return window.get('kCGWindowName', 'Unknown')
     return None
 
-
-async def get_active_window():
-    """Get the active window's title, compatible across different OS."""
-    system = platform.system()
-    if system == "Windows":
-        return get_active_window_windows()
-    elif system == "Linux":
-        return get_active_window_linux()
-    elif system == "Darwin":
-        return get_active_window_macos()
-    else:
-        return None
-
+get_active_window = {
+    "Windows": get_active_window_windows,
+    "Linux": get_active_window_linux,
+    "Darwin": get_active_window_macos
+}
 
 # Save History
 
@@ -266,7 +266,7 @@ def write_to_csv_file(filename, tracked_windows, file_exists):
     with open(filename, mode='a', newline='', encoding="utf-8") as file:
         writer = csv.writer(file)
         if not file_exists:
-            writer.writerow(['Time', 'Program Name', 'Window Title'])
+            writer.writerow(['Time', 'Window Title'])
         writer.writerows(tracked_windows)
 
 
@@ -313,9 +313,14 @@ def summary_to_event_format(summary: Dict[str, timedelta]) -> List[Tuple[timedel
 def format_events(events: List[Tuple[timedelta, str]]) -> str:
     # Step 3: Organize events into hierarchical structure
     def add_to_hierarchy(hierarchy, hierarchy_list, duration):
-        for part in hierarchy_list[:-1]:
+        for part in hierarchy_list:
             hierarchy = hierarchy.setdefault(part, OrderedDict())
-        hierarchy[hierarchy_list[-1]] = hierarchy.get(hierarchy_list[-1], timedelta()) + duration
+        try:
+            hierarchy[hierarchy_list[-1]] = hierarchy.get(hierarchy_list[-1], timedelta()) + duration
+        except Exception as e:
+            if DEBUG:
+                print(f"{e}")
+                print(f"{hierarchy_list[-1]=} | {type(hierarchy_list[-1])=}")
 
     hierarchy = OrderedDict()
     for duration, program_hierarchy in events:
@@ -326,7 +331,7 @@ def format_events(events: List[Tuple[timedelta, str]]) -> str:
         if depth == 0:
             return ""
         else:
-            return "|" + "--" * depth + "> "
+            return "|" + "--" * (depth-1) + "> "
 
     # Step 5: Format the hierarchical structure into a string
     def format_hierarchy(hierarchy, depth=0):
@@ -344,7 +349,10 @@ def format_events(events: List[Tuple[timedelta, str]]) -> str:
                 if len(value) == 1:
                     # Combine this level with its child
                     child_key, child_value = next(iter(value.items()))
-                    combined_key = f"{key} - {child_key}"
+                    if key != child_key:
+                        combined_key = f"{key} - {child_key}"
+                    else:
+                        combined_key = key
                     if isinstance(child_value, timedelta):
                         output += f"{generate_prefix(depth)}{str(child_value).split('.')[0]} - {combined_key}\n"
                     else:
