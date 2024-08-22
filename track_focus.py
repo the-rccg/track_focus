@@ -124,6 +124,8 @@ class TrackingApp:
 
 
 async def track_windows(save_path, save_interval=300, operating_system = OPERATING_SYSTEM):
+    get_active_window_func = get_active_window[operating_system]
+
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
@@ -149,7 +151,7 @@ async def track_windows(save_path, save_interval=300, operating_system = OPERATI
     # Main Loop: Getting & saving current focus window
     try:
         while True:
-            window_title = await get_active_window[operating_system]()
+            window_title = get_active_window_func()
             if window_title and (previous_window != window_title):
                 if previous_window and start_time:
                     end_time = datetime.now()
